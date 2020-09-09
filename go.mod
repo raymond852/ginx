@@ -1,0 +1,8 @@
+module github.com/raymond852/ginx
+
+go 1.14
+
+require (
+	github.com/getkin/kin-openapi v0.22.0
+	github.com/gin-gonic/gin v1.6.3
+)
