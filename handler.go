@@ -6,6 +6,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	"io"
 	"io/ioutil"
 	"mime"
@@ -17,6 +19,24 @@ import (
 )
 
 var swaggerPathPrefix string
+
+func UseOpenTracing(engine *gin.Engine, tracer opentracing.Tracer) {
+	engine.Use(func(c *gin.Context) {
+		carrier := opentracing.HTTPHeadersCarrier(c.Request.Header)
+		ctx, _ := tracer.Extract(opentracing.HTTPHeaders, carrier)
+		sp := tracer.StartSpan(c.Request.Method + " " + c.FullPath(), ext.RPCServerOption(ctx))
+		ext.HTTPMethod.Set(sp, c.Request.Method)
+		ext.HTTPUrl.Set(sp, c.FullPath())
+		ext.SpanKind.Set(sp, "api")
+		sp.SetTag("client.ip", c.ClientIP())
+		c.Request = c.Request.WithContext(opentracing.ContextWithSpan(c.Request.Context(), sp))
+
+		c.Next()
+
+		ext.HTTPStatusCode.Set(sp, uint16(c.Writer.Status()))
+		sp.Finish()
+	})
+}
 
 func UseSwaggerUI(engine *gin.Engine, swaggerPath string) {
 	if !strings.HasPrefix(swaggerPath, "/") {
