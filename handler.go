@@ -27,7 +27,6 @@ func UseOpenTracing(engine *gin.Engine, tracer opentracing.Tracer) {
 		sp := tracer.StartSpan(c.Request.Method + " " + c.FullPath(), ext.RPCServerOption(ctx))
 		ext.HTTPMethod.Set(sp, c.Request.Method)
 		ext.HTTPUrl.Set(sp, c.FullPath())
-		ext.SpanKind.Set(sp, "api")
 		sp.SetTag("client.ip", c.ClientIP())
 		c.Request = c.Request.WithContext(opentracing.ContextWithSpan(c.Request.Context(), sp))
 
