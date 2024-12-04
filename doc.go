@@ -34,17 +34,17 @@ const (
 	DocTagFieldStringMinLength = "minLength"
 )
 
-var DocRoot *openapi3.Swagger
+var DocRoot *openapi3.T
 
 func Init(description, version, title string) {
-	DocRoot = &openapi3.Swagger{
+	DocRoot = &openapi3.T{
 		OpenAPI: "3.0.0",
 		Info: &openapi3.Info{
 			Description: description,
 			Version:     version,
 			Title:       title,
 		},
-		Paths: make(map[string]*openapi3.PathItem),
+		Paths: openapi3.NewPaths(),
 	}
 }
 
@@ -94,7 +94,10 @@ func UrlEncodedFormRequestBody(prototype interface{}) *docRequestBody {
 func JSONRequestBody(prototype interface{}) *docRequestBody {
 	schemeRef := extractSchema(prototype)
 	if b, err := json.Marshal(prototype); err == nil {
-		schemeRef.Value.Example = json.RawMessage(b)
+		var obj map[string]interface{}
+		if err = json.Unmarshal(b, &obj); err == nil {
+			schemeRef.Value.Example = obj
+		}
 	}
 	return &docRequestBody{
 		required: true,
@@ -107,7 +110,10 @@ func JSONRequestBody(prototype interface{}) *docRequestBody {
 func JSONResponseBody(prototype interface{}) *docResponse {
 	schemeRef := extractSchema(prototype)
 	if b, err := json.Marshal(prototype); err == nil {
-		schemeRef.Value.Example = json.RawMessage(b)
+		var inInterface map[string]interface{}
+		if err = json.Unmarshal(b, &inInterface); err == nil {
+			schemeRef.Value.Example = inInterface
+		}
 	}
 	return &docResponse{
 		contents: map[string]*openapi3.SchemaRef{
@@ -143,13 +149,13 @@ func PDFResponseBody() *docResponse {
 func newDocPath(route *route) *docPath {
 	var p *openapi3.PathItem
 	ph := ginToOpenAPIPathPattern.ReplaceAllString(route.httpPath, `/{$2}`)
-	if pathItemObj, ok := DocRoot.Paths[ph]; ok {
+	if pathItemObj := DocRoot.Paths.Value(ph); pathItemObj != nil {
 		p = pathItemObj
 	} else {
 		p = &openapi3.PathItem{}
 	}
 	op := &openapi3.Operation{}
-	op.Responses = make(map[string]*openapi3.ResponseRef)
+	op.Responses = openapi3.NewResponses()
 	switch route.httpMethod {
 	case http.MethodGet:
 		p.Get = op
@@ -168,7 +174,7 @@ func newDocPath(route *route) *docPath {
 	case http.MethodTrace:
 		p.Trace = op
 	}
-	DocRoot.Paths[ph] = p
+	DocRoot.Paths.Set(ph, p)
 	return &docPath{p, op}
 }
 
@@ -214,11 +220,11 @@ func (d *docPath) RequestBody(body *docRequestBody) *docPath {
 
 func (d *docPath) Response(httpCode string, resp *docResponse, desc string) *docPath {
 	if d.operation.Responses == nil {
-		d.operation.Responses = make(map[string]*openapi3.ResponseRef)
+		d.operation.Responses = openapi3.NewResponses()
 	}
 
 	resp.description = &desc
-	d.operation.Responses[httpCode] = resp.ToOpenAPIResponse()
+	d.operation.Responses.Set(httpCode, resp.ToOpenAPIResponse())
 	return d
 }
 
@@ -365,7 +371,8 @@ func extractSchema(prototype interface{}) *openapi3.SchemaRef {
 	}
 	if vh := extractArray(prototype); vh != nil {
 		sch := openapi3.NewArraySchema()
-		sch.Type = "array"
+		t := openapi3.Types([]string{"array"})
+		sch.Type = &t
 		if vh.Value.Len() == 0 {
 			panic(fmt.Sprintf("prototype=%+v should has one or more elements in an array", prototype))
 		}

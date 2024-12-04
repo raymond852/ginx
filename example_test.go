@@ -52,8 +52,6 @@ type JSONRequest struct {
 	Test2      string  `json:"test2" doc:"required enum(#EnumTest2Field) desc(#DescTest2Field)"`
 	Number     float64 `json:"number" doc:"desc(number test)"`
 	Integer    int     `json:"integer" doc:"required desc(integer test) minimum(5) maximum(100)"`
-	Integer8   int8    `json:"integer8" doc:"desc(integer test)"`
-	Integer16  int16   `json:"integer16" doc:"desc(integer test)"`
 	Integer32  int32   `json:"integer32" doc:"desc(integer test)"`
 	Integer64  int64   `json:"integer64" doc:"desc(integer test)"`
 }
@@ -92,8 +90,6 @@ func (e exampleAPI) RouteGroup() *RouteGroup {
 			Test2:      "val3",
 			Number:     10,
 			Integer:    10,
-			Integer8:   8,
-			Integer16:  16,
 			Integer32:  32,
 			Integer64:  64,
 		}).Required(true).Description("test JSON request body")).

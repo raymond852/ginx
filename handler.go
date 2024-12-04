@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
+	"github.com/getkin/kin-openapi/routers"
+	"github.com/getkin/kin-openapi/routers/legacy"
 	"github.com/gin-gonic/gin"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
@@ -24,7 +26,7 @@ func UseOpenTracing(engine *gin.Engine, tracer opentracing.Tracer) {
 	engine.Use(func(c *gin.Context) {
 		carrier := opentracing.HTTPHeadersCarrier(c.Request.Header)
 		ctx, _ := tracer.Extract(opentracing.HTTPHeaders, carrier)
-		sp := tracer.StartSpan(c.Request.Method + " " + c.FullPath(), ext.RPCServerOption(ctx))
+		sp := tracer.StartSpan(c.Request.Method+" "+c.FullPath(), ext.RPCServerOption(ctx))
 		ext.HTTPMethod.Set(sp, c.Request.Method)
 		ext.HTTPUrl.Set(sp, c.FullPath())
 		sp.SetTag("client.ip", c.ClientIP())
@@ -51,34 +53,33 @@ func UseSwaggerUI(engine *gin.Engine, swaggerPath string) {
 	swaggerPathPrefix = swaggerPath
 }
 
-func UseValidator(engine *gin.Engine, validationErrorHandler func(*gin.Context, error)) {
-	var router *openapi3filter.Router
+func UseValidator(engine *gin.Engine, validationErrorHandler func(*gin.Context, error), opts ...openapi3.ValidationOption) {
+	var router routers.Router
 	decodeBody := func(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn openapi3filter.EncodingFn) (interface{}, error) {
 		data, err := ioutil.ReadAll(body)
 		if err != nil {
 			return nil, &openapi3filter.ParseError{Kind: openapi3filter.KindInvalidFormat, Cause: err}
 		}
-		switch schema.Value.Type {
-		case "integer", "number":
+		if schema.Value.Type.Is("integer") || schema.Value.Type.Is("number") {
 			v, err := strconv.ParseFloat(string(data), 64)
 			if err != nil {
 				return nil, &openapi3filter.ParseError{Kind: openapi3filter.KindInvalidFormat, Value: string(data), Reason: "an invalid integer", Cause: err}
 			}
 			return v, nil
-		case "boolean":
+		} else if schema.Value.Type.Is("boolean") {
 			v, err := strconv.ParseBool(string(data))
 			if err != nil {
 				return nil, &openapi3filter.ParseError{Kind: openapi3filter.KindInvalidFormat, Value: string(data), Reason: "an invalid boolean", Cause: err}
 			}
 			return v, nil
-		default:
+		} else {
 			return string(data), nil
 		}
 	}
 
 	// Override the multipart/form-data so that the validation will not based on the content-type of the form field
 	openapi3filter.RegisterBodyDecoder("multipart/form-data", func(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn openapi3filter.EncodingFn) (interface{}, error) {
-		if schema.Value.Type != "object" {
+		if !schema.Value.Type.Is("object") {
 			return nil, errors.New("unsupported JSON schema of request body")
 		}
 
@@ -113,7 +114,7 @@ func UseValidator(engine *gin.Engine, validationErrorHandler func(*gin.Context, 
 			var exists bool
 			valueSchema, exists = schema.Value.Properties[name]
 			if !exists {
-				anyProperties := schema.Value.AdditionalPropertiesAllowed
+				anyProperties := schema.Value.AdditionalProperties.Has
 				if anyProperties != nil {
 					switch *anyProperties {
 					case true:
@@ -124,15 +125,15 @@ func UseValidator(engine *gin.Engine, validationErrorHandler func(*gin.Context, 
 						return nil, &openapi3filter.ParseError{Kind: openapi3filter.KindOther, Cause: fmt.Errorf("part %s: undefined", name)}
 					}
 				}
-				if schema.Value.AdditionalProperties == nil {
+				if schema.Value.AdditionalProperties.Has == nil {
 					return nil, &openapi3filter.ParseError{Kind: openapi3filter.KindOther, Cause: fmt.Errorf("part %s: undefined", name)}
 				}
-				valueSchema, exists = schema.Value.AdditionalProperties.Value.Properties[name]
+				valueSchema, exists = schema.Value.AdditionalProperties.Schema.Value.Properties[name]
 				if !exists {
 					return nil, &openapi3filter.ParseError{Kind: openapi3filter.KindOther, Cause: fmt.Errorf("part %s: undefined", name)}
 				}
 			}
-			if valueSchema.Value.Type == "array" {
+			if valueSchema.Value.Type.Is("array") {
 				valueSchema = valueSchema.Value.Items
 			}
 
@@ -147,8 +148,8 @@ func UseValidator(engine *gin.Engine, validationErrorHandler func(*gin.Context, 
 		for k, v := range schema.Value.Properties {
 			allTheProperties[k] = v
 		}
-		if schema.Value.AdditionalProperties != nil {
-			for k, v := range schema.Value.AdditionalProperties.Value.Properties {
+		if schema.Value.AdditionalProperties.Has != nil {
+			for k, v := range schema.Value.AdditionalProperties.Schema.Value.Properties {
 				allTheProperties[k] = v
 			}
 		}
@@ -159,7 +160,7 @@ func UseValidator(engine *gin.Engine, validationErrorHandler func(*gin.Context, 
 			if len(vv) == 0 {
 				continue
 			}
-			if prop.Value.Type == "array" {
+			if prop.Value.Type.Is("array") {
 				obj[name] = vv
 			} else {
 				obj[name] = vv[0]
@@ -175,12 +176,16 @@ func UseValidator(engine *gin.Engine, validationErrorHandler func(*gin.Context, 
 		if strings.HasPrefix(reqUrl.Path, swaggerPathPrefix) {
 			return
 		}
-		method := c.Request.Method
 
 		if router == nil {
-			router = openapi3filter.NewRouter().WithSwagger(DocRoot)
+			r, err := legacy.NewRouter(DocRoot, opts...)
+			if err != nil {
+				panic(err)
+			} else {
+				router = r
+			}
 		}
-		route, pathParams, _ := router.FindRoute(method, reqUrl)
+		route, pathParams, _ := router.FindRoute(c.Request)
 
 		requestValidationInput := &openapi3filter.RequestValidationInput{
 			Request:    c.Request,
